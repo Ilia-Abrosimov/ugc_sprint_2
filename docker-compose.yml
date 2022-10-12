@@ -1,0 +1,439 @@
+version: '3.8'
+
+services:
+  # Kafka
+  kafka-zookeeper:
+    image: wurstmeister/zookeeper:3.4.6
+    container_name: kafka-zookeeper
+    ports:
+      - "2181:2181"
+    profiles:
+      - oltp
+      - etl
+
+  kafka1:
+    platform: linux/amd64
+    image: confluentinc/cp-kafka:6.0.1
+    container_name: kafka1
+    ports:
+      - "9092:9092"
+    expose:
+      - "9093"
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka1:9093,OUTSIDE://localhost:9092
+      KAFKA_LISTENERS: INSIDE://0.0.0.0:9093,OUTSIDE://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_ZOOKEEPER_CONNECT: kafka-zookeeper:2181
+      KAFKA_CREATE_TOPICS: "views:1:1"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    depends_on:
+      - kafka-zookeeper
+    healthcheck:
+      test: nc -z localhost 9092 || exit -1
+      start_period: 15s
+      interval: 5s
+      timeout: 10s
+      retries: 50
+    profiles:
+      - oltp
+      - etl
+
+  kafka-test:
+    platform: linux/amd64
+    image: confluentinc/cp-kafka:6.0.1
+    expose:
+      - "9093"
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka-test:9093
+      KAFKA_LISTENERS: INSIDE://0.0.0.0:9093,OUTSIDE://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_ZOOKEEPER_CONNECT: kafka-zookeeper:2181
+      KAFKA_CREATE_TOPICS: "views:1:1"
+    depends_on:
+      - kafka-zookeeper
+    profiles:
+      - tests
+
+  oltp-service:
+    build:
+      context: ./services/oltp
+    container_name: oltp-service
+    restart: on-failure
+    env_file:
+      - .env
+    ports:
+      - "5005:5000"
+    depends_on:
+      kafka1:
+        condition: service_healthy
+    command: gunicorn --bind 0.0.0.0:5000 wsgi_app:app
+    profiles:
+      - oltp
+      - etl
+
+  nginx:
+    image: nginx:1.19.2
+    volumes:
+      - ./services/elk/deploy/etc/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./services/elk/deploy/etc/nginx/conf.d:/etc/nginx/conf.d:ro
+      - /tmp/logs/nginx/:/var/log/nginx/
+    depends_on:
+      - oltp-service
+    ports:
+      - 8080:80
+    profiles:
+      - oltp
+      - etl
+
+  elasticsearch:
+    image: elasticsearch:7.17.0
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: -Xms200m -Xmx200m
+    ports:
+      - 9200:9200
+    volumes:
+      - /tmp/esdata:/tmp/elasticsearch/data
+    profiles:
+      - oltp
+      - etl
+
+  kibana:
+    image: kibana:7.17.0
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    profiles:
+      - oltp
+      - etl
+
+  logstash:
+    image: logstash:8.4.2
+    depends_on:
+      - elasticsearch
+    environment:
+      XPACK_MONITORING_ENABLED: "false"
+      ES_HOST: "elasticsearch:9200"
+    ports:
+      - "5044:5044/udp"
+      - "5046:5046/udp"
+    volumes:
+      - ./services/elk/deploy/logstash.conf:/config/logstash.conf:ro
+      - /tmp/logs/nginx/:/var/log/nginx/:ro
+    command: logstash -f /config/logstash.conf
+    profiles:
+      - oltp
+      - etl
+
+  filebeat:
+    image: docker.io/elastic/filebeat:8.4.2
+    command: filebeat -e -strict.perms=false
+    volumes:
+      - /tmp/logs/nginx:/var/log/nginx:ro
+      - ./services/elk/deploy/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+    depends_on:
+      - oltp-service
+      - nginx
+      - logstash
+      - elasticsearch
+      - kibana
+    links:
+      - logstash
+    profiles:
+      - oltp
+      - etl
+
+  # ClickHouse
+  clickhouse-zookeeper:
+    image: zookeeper:3.5
+    container_name: clickhouse-zookeeper
+    hostname: zookeeper
+    profiles:
+      - ch
+      - olap
+      - etl
+
+  clickhouse-node1:
+    image: yandex/clickhouse-server
+    container_name: clickhouse-node1
+    hostname: clickhouse-node1
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - ./services/olap/data/node1:/etc/clickhouse-server
+    depends_on:
+      - clickhouse-zookeeper
+    profiles:
+      - ch
+      - olap
+      - etl
+
+  clickhouse-node2:
+    image: yandex/clickhouse-server
+    container_name: clickhouse-node2
+    hostname: clickhouse-node2
+    volumes:
+      - ./services/olap/data/node2:/etc/clickhouse-server
+    depends_on:
+      - clickhouse-zookeeper
+    profiles:
+      - ch
+      - olap
+      - etl
+
+  clickhouse-node3:
+    image: yandex/clickhouse-server
+    container_name: clickhouse-node3
+    hostname: clickhouse-node3
+    volumes:
+      - ./services/olap/data/node3:/etc/clickhouse-server
+    depends_on:
+      - clickhouse-zookeeper
+    profiles:
+      - ch
+      - olap
+      - etl
+
+  clickhouse-node4:
+    image: yandex/clickhouse-server
+    container_name: clickhouse-node4
+    hostname: clickhouse-node4
+    volumes:
+      - ./services/olap/data/node4:/etc/clickhouse-server
+    depends_on:
+      - clickhouse-zookeeper
+    profiles:
+      - ch
+      - olap
+      - etl
+
+  # ETL
+  etl:
+    build: ./services/etl
+    container_name: etl
+    profiles:
+      - oltp
+      - etl
+    env_file:
+      - .env
+    depends_on:
+      kafka1:
+        condition: service_healthy
+    logging:
+      driver: gelf
+      options:
+        gelf-address: udp://127.0.0.1:5046
+        tag: etl
+
+  # OLAP
+  olap:
+    build: ./services/olap
+    container_name: olap
+    profiles:
+      - olap
+      - etl
+    env_file:
+      - .env
+    depends_on:
+      - clickhouse-zookeeper
+      - clickhouse-node1
+      - clickhouse-node2
+      - clickhouse-node3
+      - clickhouse-node4
+      - mongos1
+      - mongors1n1
+      - mongors1n2
+      - mongors1n3
+    volumes:
+      - ./services/olap/logs:/opt/olap/logs
+    command: python3 main.py
+
+  # Mongo
+  mongors1n1:
+    container_name: mongors1n1
+    image: mongo
+    profiles:
+      - mongo
+      - olap
+      - etl
+      - oltp
+    command: mongod --shardsvr --replSet mongors1 --dbpath /data/db --port 27017 --quiet --logpath /dev/null
+    ports:
+      - "27017:27017"
+    expose:
+      - "27017"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /tmp/mongo_cluster/data1:/data/db
+
+  mongors1n2:
+    container_name: mongors1n2
+    image: mongo
+    profiles:
+      - mongo
+      - olap
+      - etl
+      - oltp
+    command: mongod --shardsvr --replSet mongors1 --dbpath /data/db --port 27017 --quiet --logpath /dev/null
+    ports:
+      - "27027:27017"
+    expose:
+      - "27017"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /tmp/mongo_cluster/data2:/data/db
+
+  mongors1n3:
+    container_name: mongors1n3
+    image: mongo
+    profiles:
+      - mongo
+      - olap
+      - etl
+      - oltp
+    command: mongod --shardsvr --replSet mongors1 --dbpath /data/db --port 27017 --quiet --logpath /dev/null
+    ports:
+      - 27037:27017
+    expose:
+      - 27017
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /tmp/mongo_cluster/data3:/data/db
+
+  mongors2n1:
+    container_name: mongors2n1
+    image: mongo
+    profiles:
+      - mongo
+      - olap
+      - etl
+      - oltp
+    command: mongod --shardsvr --replSet mongors2 --dbpath /data/db --port 27017 --quiet --logpath /dev/null
+    ports:
+      - "27047:27017"
+    expose:
+      - "27017"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /tmp/mongo_cluster/data4:/data/db
+
+  mongors2n2:
+    container_name: mongors2n2
+    image: mongo
+    profiles:
+      - mongo
+      - olap
+      - etl
+      - oltp
+    command: mongod --shardsvr --replSet mongors2 --dbpath /data/db --port 27017 --quiet --logpath /dev/null
+    ports:
+      - "27057:27017"
+    expose:
+      - "27017"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /tmp/mongo_cluster/data5:/data/db
+
+  mongors2n3:
+    container_name: mongors2n3
+    image: mongo
+    profiles:
+      - mongo
+      - olap
+      - etl
+      - oltp
+    command: mongod --shardsvr --replSet mongors2 --dbpath /data/db --port 27017 --quiet --logpath /dev/null
+    ports:
+      - "27067:27017"
+    expose:
+      - "27017"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /tmp/mongo_cluster/data6:/data/db
+
+  mongocfg1:
+    container_name: mongocfg1
+    image: mongo
+    profiles:
+      - mongo
+      - olap
+      - etl
+      - oltp
+    command: mongod --configsvr --replSet mongors1conf --dbpath /data/db --port 27017 --quiet --logpath /dev/null
+    expose:
+      - "27017"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /tmp/mongo_cluster/config1:/data/db
+
+  mongocfg2:
+    container_name: mongocfg2
+    image: mongo
+    profiles:
+      - mongo
+      - olap
+      - etl
+      - oltp
+    command: mongod --configsvr --replSet mongors1conf --dbpath /data/db --port 27017 --quiet --logpath /dev/null
+    expose:
+      - "27017"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /tmp/mongo_cluster/config2:/data/db
+
+  mongocfg3:
+    container_name: mongocfg3
+    image: mongo
+    profiles:
+      - mongo
+      - olap
+      - etl
+      - oltp
+    command: mongod --configsvr --replSet mongors1conf --dbpath /data/db --port 27017 --quiet --logpath /dev/null
+    expose:
+      - 27017
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /tmp/mongo_cluster/config3:/data/db
+
+  mongos1:
+    container_name: mongos1
+    image: mongo
+    profiles:
+      - mongo
+      - olap
+      - etl
+      - oltp
+    depends_on:
+      - mongocfg1
+      - mongocfg2
+    command: mongos --configdb mongors1conf/mongocfg1:27017,mongocfg2:27017,mongocfg3:27017 --port 27017
+    ports:
+      - "27019:27017"
+    expose:
+      - "27017"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+
+  mongos2:
+    container_name: mongos2
+    image: mongo
+    profiles:
+      - mongo
+      - olap
+      - etl
+      - oltp
+    depends_on:
+      - mongocfg1
+      - mongocfg2
+    command: mongos --configdb mongors1conf/mongocfg1:27017,mongocfg2:27017,mongocfg3:27017 --port 27017
+    ports:
+      - "27020:27017"
+    expose:
+      - "27017"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro

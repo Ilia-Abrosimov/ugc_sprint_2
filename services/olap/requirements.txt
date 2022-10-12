@@ -1,0 +1,4 @@
+clickhouse-driver==0.2.4
+pymongo==4.2.0
+pydantic==1.10.2
+loguru==0.6.0

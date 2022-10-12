@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+
+  # ClickHouse
+  clickhouse-zookeeper:
+    image: zookeeper:3.5
+    container_name: clickhouse-zookeeper
+    hostname: zookeeper
+    profiles:
+      - ch
+
+  clickhouse-node1:
+    image: yandex/clickhouse-server
+    container_name: clickhouse-node1
+    hostname: clickhouse-node1
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - ./storages/click_house/data/node1:/etc/clickhouse-server
+    depends_on:
+      - clickhouse-zookeeper
+    profiles:
+      - ch
+
+  clickhouse-node2:
+    image: yandex/clickhouse-server
+    container_name: clickhouse-node2
+    hostname: clickhouse-node2
+    volumes:
+      - ./storages/click_house/data/node2:/etc/clickhouse-server
+    depends_on:
+      - clickhouse-zookeeper
+    profiles:
+      - ch
+
+  clickhouse-node3:
+    image: yandex/clickhouse-server
+    container_name: clickhouse-node3
+    hostname: clickhouse-node3
+    volumes:
+      - ./storages/click_house/data/node3:/etc/clickhouse-server
+    depends_on:
+      - clickhouse-zookeeper
+    profiles:
+      - ch
+
+  clickhouse-node4:
+    image: yandex/clickhouse-server
+    container_name: clickhouse-node4
+    hostname: clickhouse-node4
+    volumes:
+      - ./storages/click_house/data/node4:/etc/clickhouse-server
+    depends_on:
+      - clickhouse-zookeeper
+    profiles:
+      - ch
+
+  # Mongo
+  mongo:
+    container_name: mongo
+    image: mongo
+    profiles:
+      - mongo
+    ports:
+      - 27017:27017
+
+  # Tests
+  test_click_house:
+    build:
+      context: .
+      dockerfile: ./tests/click_house/Dockerfile
+    container_name: test_click_house
+    profiles:
+      - test_click_house
+    env_file:
+      - .env
+
+  test_mongo:
+    build:
+      context: .
+      dockerfile: ./tests/mongo/Dockerfile
+    container_name: test_mongo
+    profiles:
+      - test_mongo
+    env_file:
+      - .env

@@ -1,0 +1,102 @@
+name: UGC Service
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # python-version: [3.7, 3.8, 3.9, 3.10.7]
+        python-version: [3.9, 3.10.7]
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Create directories
+        run: |
+          mkdir -p reports/flake/
+          mkdir -p reports/mypy/
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install wemake-python-styleguide flake8-html mypy lxml
+
+      - name: Lint with wemake-python-styleguide
+        run: |
+          flake8 . --exit-zero --format=html --htmldir=reports/flake/
+
+      - name: Lint with mypy
+        run: |
+          mypy --html-report reports/mypy/ --namespace-packages -p services --ignore-missing-imports
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v2
+        with:
+          name: reports
+          path: reports/
+
+  telegram:
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs: build
+    steps:
+
+      - name: send telegram message on open
+        uses: appleboy/telegram-action@master
+        if: ${{ github.event.action == 'opened' }}
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: |
+            ${{ github.actor }} created PR commit: {{ commit.sha }}
+
+            PR commit title: ${{ github.event.pull_request.title }}
+            PR commit message: ${{ github.event.pull_request.body }}
+
+            Repository: ${{ github.repository }}            
+            Status: ${{ needs.build.result }}
+
+            See changes: https://github.com/${{ github.repository }}/commit/${{github.sha}}    
+
+      - name: send telegram message on synchronize
+        uses: appleboy/telegram-action@master
+        if: ${{ github.event.action == 'synchronize' }}
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: |
+            ${{ github.actor }} added commit: {{ commit.sha }}
+            at PR: ${{ github.event.pull_request.title }}
+            with message: ${{ github.event.pull_request.body }} 1
+
+            Repository: ${{ github.repository }}            
+            Status: ${{ needs.build.result }}
+
+            See changes: https://github.com/${{ github.repository }}/commit/${{github.sha}}            
+
+      - name: send telegram message on push
+        uses: appleboy/telegram-action@master
+        if: ${{ github.event_name == 'push' }}
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: |
+            ${{ github.actor }} merged MR: {{ commit.sha }}
+            with message: ${{ github.event.head_commit.message }}
+
+            Repository: ${{ github.repository }}            
+            Status: ${{ needs.build.result }}
+
+            See changes: ${{ github.event.head_commit.url }}

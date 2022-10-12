@@ -1,0 +1,5 @@
+testcontainers==3.6.1
+kafka-python==2.0.2
+esdb==0.2.4
+pydantic==1.10.2
+loguru==0.6.0

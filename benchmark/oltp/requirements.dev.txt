@@ -1,0 +1,4 @@
+isort==5.10.1
+oitnb==0.2.2
+matplotlib==3.3.0
+numpy==1.23.3
