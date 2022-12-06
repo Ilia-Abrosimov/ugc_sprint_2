@@ -1,7 +1,5 @@
 # UGC
-
-[Ссылка на репозиторий](https://github.com/strecobyasha/ugc_sprint_2)
-
+![img.png](img.png)
 ### Изменения
 
     Добавлен ELK.
